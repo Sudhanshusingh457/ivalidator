@@ -341,4 +341,3 @@ Structure your response with clear headings and bullet points.
                         st.markdown(f"### AI Response:\n{ai_response}")
 
 st.divider()
-st.caption("© 2025 Maritime Data Validator")
