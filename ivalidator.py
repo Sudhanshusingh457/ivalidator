@@ -115,8 +115,8 @@ with st.sidebar:
     join_type = st.selectbox(
         "Comparison Method",
         ["Left Join (Find mismatches)", 
-         "Inner Join (Find matches)",
-         "Anti Join (Find non-matches)"],
+        "Inner Join (Find matches)",
+        "Outer Join (Find all differences)"],  
         help="Select how to compare the datasets"
     )
     
@@ -232,20 +232,24 @@ if report_file and client_file:
             merged = df_report.merge(df_client, left_on=report_columns, right_on=client_columns, how='inner')
             matches = merged[report_columns + client_columns]
             mismatches = None
-        else:  # Anti Join
-            merged = df_report.merge(df_client, left_on=report_columns, right_on=client_columns, how='left', indicator=True)
-            mismatches = merged[merged['_merge'] == 'left_only'][report_columns]
-            matches = None
+        else:  # Outer Join
+            merged = df_report.merge(df_client, left_on=report_columns, right_on=client_columns, how='outer', indicator=True)
+            mismatches = merged[merged['_merge'] != 'both']
+            report_only = merged[merged['_merge'] == 'left_only'][report_columns]
+            client_only = merged[merged['_merge'] == 'right_only'][client_columns]
 
         st.subheader("📊 Validation Results")
         
         # Metrics
         col1, col2, col3 = st.columns(3)
-        with col1: st.metric("Total Report Rows", len(df_report))
-        with col2: st.metric("Total Client Rows", len(df_client))
+        with col1:
+            st.metric("Total Report Rows", len(df_report))
+        with col2:
+            st.metric("Total Client Rows", len(df_client))
 
         if join_type == "Inner Join (Find matches)":
-            with col3: st.metric("Matching Rows Found", len(matches))
+            with col3:
+                st.metric("Matching Rows Found", len(matches))
             st.success(f"✅ Found {len(matches)} matching records")
             with st.expander("🔍 View Matching Records", expanded=True):
                 st.dataframe(matches)
@@ -259,48 +263,80 @@ if report_file and client_file:
                 key='download-matches'
             )
         else:
-            with col3: st.metric("Mismatches Found", len(mismatches) if mismatches is not None else 0)
+            with col3:
+                st.metric("Mismatches Found", len(mismatches) if mismatches is not None else 0)
             if mismatches is not None and len(mismatches) > 0:
                 st.warning(f"⚠️ Found {len(mismatches)} mismatches")
                 tab_mismatch, tab_stats = st.tabs(["Mismatch Details", "Statistics"])
 
                 with tab_mismatch:
+                    # Show mismatches (outer join cases)
                     st.dataframe(mismatches)
                     
+                    # CSV for downloading mismatches
                     csv = mismatches.to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        "📥 Download Mismatch Report",
+                        "📥 Download All Differences",
                         csv,
-                        "mismatch_report.csv",
+                        "all_differences.csv",
                         "text/csv",
                         key='download-csv'
                     )
 
                 with tab_stats:
-                    if join_type == "Left Join (Find mismatches)":
-                        match_pct = 100 * (len(df_report) - len(mismatches)) / len(df_report)
-                        st.markdown(f"- **Match %**: {match_pct:.1f}%\n- **Mismatch %**: {100-match_pct:.1f}%")
-                    else:
-                        st.markdown(f"- **Total Non-Matches**: {len(mismatches)}")
+                    if join_type == "Outer Join (Find all differences)":
+                        st.markdown(f"- **Total Differences Found**: {len(mismatches)}")
+                        st.markdown(f"- **Only in Power BI**: {len(report_only)}")
+                        st.markdown(f"- **Only in Client Data**: {len(client_only)}")
                         
-                    pie_data = pd.DataFrame({
-                        "Status": ["Matching", "Mismatched"],
-                        "Count": [len(df_report) - len(mismatches), len(mismatches)]
-                    })
+                        pie_data = pd.DataFrame({
+                            "Status": ["Matching", "Only in Power BI", "Only in Client"],
+                            "Count": [
+                                len(df_report) - len(report_only),
+                                len(report_only),
+                                len(client_only)
+                            ]
+                        })
 
-                    st.plotly_chart(
-                        px.pie(
-                            pie_data,
-                            values='Count',
-                            names='Status',
-                            title='Match/Mismatch Distribution',
-                            color='Status',
-                            color_discrete_map={'Matching':'green','Mismatched':'red'}
-                        ),
-                        use_container_width=True
-                    )
+                        st.plotly_chart(
+                            px.pie(
+                                pie_data,
+                                values='Count',
+                                names='Status',
+                                title='Data Comparison Distribution',
+                                color='Status',
+                                color_discrete_map={
+                                    'Matching': 'green',
+                                    'Only in Power BI': 'orange',
+                                    'Only in Client': 'red'
+                                }
+                            ),
+                            use_container_width=True
+                        )
+                    else:
+                        match_pct = 100 * (len(df_report) - len(mismatches)) / len(df_report)
+                        st.markdown(f"- **Match %**: {match_pct:.1f}%\n- **Mismatch %**: {100 - match_pct:.1f}%")
+                        
+                        pie_data = pd.DataFrame({
+                            "Status": ["Matching", "Mismatched"],
+                            "Count": [len(df_report) - len(mismatches), len(mismatches)]
+                        })
+
+                        st.plotly_chart(
+                            px.pie(
+                                pie_data,
+                                values='Count',
+                                names='Status',
+                                title='Match/Mismatch Distribution',
+                                color='Status',
+                                color_discrete_map={'Matching': 'green', 'Mismatched': 'red'}
+                            ),
+                            use_container_width=True
+                        )
+
             else:
                 st.success("✅ Perfect match! All records align.")
+
 
         st.subheader("🤖 AI-Powered Insights")
         if st.toggle("Enable Advanced Analysis"):
